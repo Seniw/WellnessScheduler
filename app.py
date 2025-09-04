@@ -2,10 +2,12 @@ import os
 import sys
 import pandas as pd
 import streamlit as st
+import configparser
+import settings_manager  # <-- IMPORT THE NEW SETTINGS MANAGER
 from logic import (
     load_and_clean_schedule,
     load_and_parse_availability,
-    calculate_free_slots,
+    calculate_availability,
     find_couples_slots,
     generate_pdf_report,
     extract_date_range_from_filename,
@@ -16,32 +18,72 @@ from logic import (
 def get_asset_path(file_name):
     """Gets the absolute path to an asset, handling both development and frozen states."""
     if getattr(sys, 'frozen', False):
-        # The path is relative to the executable
         application_path = os.path.dirname(sys.executable)
     else:
-        # The path is relative to the script file
         application_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(application_path, file_name)
 
+def load_app_config():
+    """Loads application settings from config.ini."""
+    config = configparser.ConfigParser()
+    config_path = get_asset_path('config.ini')
+    config.read(config_path)
+    settings = config['settings']
+    return {
+        'session_duration_minutes': settings.getint('session_duration_minutes', 75),
+        'tolerance_minutes': settings.getint('tolerance_minutes', 30),
+        'min_gap_hours': settings.getint('min_gap_hours', 1)
+    }
+
 # --- UI Configuration ---
 st.set_page_config(page_title="Wellness Scheduler", layout="centered")
+
+# Load operational configuration and persistent PDF settings
+config = load_app_config()
+if 'pdf_settings' not in st.session_state:
+    st.session_state.pdf_settings = settings_manager.load_settings()
+
 st.title("Wellness Center - Weekly Availability Generator")
 
-# --- Sidebar for Guide, FAQ, and Resources ---
+# --- Sidebar for Guide, FAQ, and NEW PDF Settings ---
 with st.sidebar:
-    st.header("📄 Guide & Resources")
+    st.header("📄 Guide & Settings")
 
-    st.link_button("Convert XLS to XLSX", "https://www.freeconvert.com/xls-to-xlsx/")
-    st.caption("Needed if your 'Trainer Availability' file is in the old .xls format.")
-    st.markdown("---")
+    # --- New PDF Styling Section ---
+    with st.expander("Customize PDF Styles"):
+        st.markdown("Changes are saved automatically.")
+        
+        # Helper function to create a row of style controls
+        def style_editor(label, key):
+            st.subheader(label)
+            settings = st.session_state.pdf_settings[key]
+            c1, c2, c3 = st.columns(3)
+            settings['font_size'] = c1.number_input("Size", min_value=6, max_value=36, value=settings['font_size'], key=f"{key}_size")
+            settings['color_hex'] = c2.color_picker("Color", value=settings['color_hex'], key=f"{key}_color")
+            settings['bold'] = c3.checkbox("Bold", value=settings['bold'], key=f"{key}_bold")
+            settings['italic'] = c3.checkbox("Italic", value=settings['italic'], key=f"{key}_italic")
+            # Save settings on any change
+            settings_manager.save_settings(st.session_state.pdf_settings)
+            st.divider()
 
-    with st.expander("View Guide & FAQ", expanded=True):
-        # --- UPDATED: Text now matches the PDF exactly ---
+        style_editor("Report Title", 'title')
+        style_editor("Couples Section Header", 'couples_header')
+        style_editor("Couples Section Body", 'couples_body')
+        style_editor("Day of the Week", 'day_of_week')
+        style_editor("Therapist Name", 'therapist')
+        style_editor("Availability Times", 'times')
+        if st.button("Reset Styles to Default"):
+            st.session_state.pdf_settings = settings_manager.get_default_settings()
+            settings_manager.save_settings(st.session_state.pdf_settings)
+            st.rerun()
+
+    with st.expander("View Guide & FAQ"):
+        # The Guide & FAQ markdown content remains the same as before...
         st.markdown("""
         **1. Go to Reports → Staff Schedule**
-        * Select your start and end date (e.g., Monday-Friday or Thursday-Sunday)
+        * Select your start and end date (e.g., Monday-Friday or Thursday-Sunday).
         * Change "Late cancel - no charge" to "ALL" in the drop-down menu.
-        * Export to excel
+        * Export to excel.
             * Save the file as is (don't change the default file name).
         """)
         
@@ -53,9 +95,9 @@ with st.sidebar:
         **2. Go to Reports → Schedule at a Glance**
         * Select the same start and end dates as in the previous report.
         * Filters → Staff:
-            * Deselect Waitlist
-            * Deselect Late cancel - no charge
-        * Export to excel
+            * Deselect Waitlist.
+            * Deselect Late cancel - no charge.
+        * Export to excel.
             * Save the file as is (don't change the default file name).
         """)
 
@@ -64,40 +106,39 @@ with st.sidebar:
             st.image(image_path_schedule)
 
         st.markdown("""
-        **3. Convert the Trainer Availability file to .xlsx**
-        * Use this link: [Excel to Excel - Convert your XLS to XLSX for Free Online](https://www.freeconvert.com/xls-to-xlsx/)
-        * You only need to convert the Trainer Availability file.
-
-        **4. Open "availability_creator.exe"**
-        * Input the converted Trainer Availability and Schedule at a Glance files
-        * Click 'Generate'
-        * Download PDF Report
+        **3. Generate the Report in This App**
+        * Upload the 'Staff Schedule' and 'Schedule at a Glance' files into the main window.
+        * Click the 'Generate Report' button.
+        * Click 'Download PDF Report'.
         
         ---
         ### FAQ
-        **What if the file isn't converting properly when using the XLS to XLSX converter?**
-        * Double-check that the file is properly downloaded and is an XLS file. If the issue persists, try uploading it again or use a different converter tool.
-        * Try using one of the following resources:
-            * [XLS to XLSX Converter - FreeConvert.com](https://www.freeconvert.com/xls-to-xlsx/)
-            * [XLS (EXCEL) to XLSX (EXCEL) (Online & Free) - Convertio](https://convertio.co/xls-xlsx/)
 
-        **What happens if I forget to deselect 'Waitlist' or 'Late cancel - no charge'?**
-        * Leaving these options selected will cause inaccurate data to appear in the reports, such as "waitlist" or "late cancel" appearing on the weekly availability.
+        **What happens if I forget to deselect 'Waitlist' or 'Late cancel - no charge' from the 'Schedule at a Glance' report?**
+        * Leaving these options selected will cause inaccurate data to appear in the reports, such as "waitlist" or "late cancel" appearing on the weekly availability, since the program cannot differentiate them from a therapist.
 
         **Error: "Please upload both files to generate the report."**
-        * **What it means:** It appears if you click the "Generate" button before uploading both the Trainer Availability file and the ScheduleAtAGlance file.
-        * **How to fix it:** Simply drag and drop both required Excel files into their upload boxes. Once both files are showing, click the "Generate Availability Report" button again.
+        * **What it means:** You clicked the "Generate" button before uploading both the 'Trainer Availability' and the 'ScheduleAtAGlance' files.
+        * **How to fix it:** Simply upload both required Excel files into their designated boxes.
 
         **Error: "The date ranges in the filenames do not match. Please upload files for the same week."**
-        * **What it means:** The program checks that both files cover the same time period to prevent mistakes. This error means the dates in the two filenames are different.
-        * **How to fix it:** Check the filenames of the spreadsheets you downloaded. Make sure you have the correct Trainer Availability and ScheduleAtAGlance reports for the same week. Re-upload the correct matching files. Do not change the filenames. Go to the reports screen in mindbody and re-download the report for the correct date range.
+        * **What it means:** To prevent mistakes, the program checks that both reports cover the exact same date range. This error means the dates found in the two filenames are different.
+        * **How to fix it:** Check the filenames of your reports. Download the correct reports for the matching week and re-upload them. Do not change the filenames manually.
 
-        **Error: "An error occurred... One or both files could not be processed. Please check the file formats and ensure they are not empty."**
-        * **What it means:** This is a general-purpose error that can happen for a few reasons. It usually means the program couldn't read the inside of one of the files correctly, even if it uploaded fine.
-        * **How to fix it:** This error can almost always be solved with one of these steps:
-            * **Check if the Files are Empty:** Open both Excel files on your computer to make sure they contain the usual schedule and availability data. If one is blank, you will need to re-download it from the source.
-            * **Check for Correct Files:** This is the most common cause. Double-check that you haven't accidentally uploaded the wrong file. For instance, uploading the "ScheduleAtAGlance" report into both upload slots will cause this error.
-            * **Look for Strange Formatting:** Open the "Trainer Availability" file. Does it look normal? If there are any unusual changes, like deleted columns or all the text merged into one cell, the program might not be able to read it. Try re-downloading a fresh copy of the file.
+        **Error: "The 'Trainer Availability' file was read, but no schedules were found inside."**
+        * **What it means:** The application successfully opened the file but could not find any recognizable staff schedules. This is almost always caused by generating the 'Staff Schedule' report with the wrong filter settings (i.e., not set to "ALL").
+        * **How to fix it:** Go back to your scheduling software. Re-download the **Staff Schedule** report, ensuring you set the status filter dropdown to **"ALL"**. Before uploading, you can open the file to confirm it contains `SCHEDULE FOR [Staff Name]` sections.
+
+        **Error: "The 'ScheduleAtAGlance' file has an unexpected format. It may be missing a required column..."**
+        * **What it means:** The 'ScheduleAtAGlance' report is missing essential data columns (like 'Date', 'Start time', or 'Staff'). This can happen if the report format was changed or if you uploaded the wrong report by accident.
+        * **How to fix it:** Re-download the correct 'Schedule at a Glance' report and try again. Double-check that you are uploading it to the second input box.
+
+        **Error: "An error occurred... One or both files could not be processed." OR "An unexpected system error occurred."**
+        * **What it means:** This is a general error that can happen for a few reasons, usually meaning the program couldn't read a file correctly.
+        * **How to fix it:**
+            * **Check for Correct Files:** Make sure you haven't uploaded the wrong file or the same file into both slots.
+            * **Check if Files are Empty:** Open the Excel files on your computer to ensure they contain data. If one is blank, re-download it.
+            * **Check if Files are Open:** Make sure the files are not open in Microsoft Excel or another program, then try uploading them again.
         """)
 
 # --- File Uploaders ---
@@ -107,7 +148,7 @@ col1, col2 = st.columns(2)
 with col1:
     uploaded_availability = st.file_uploader(
         "1. Trainer Availability",
-        type=['xlsx']
+        type=['xls']
     )
 with col2:
     uploaded_schedule = st.file_uploader(
@@ -127,17 +168,13 @@ if uploaded_availability and uploaded_schedule:
                    start_date_avail == start_date_sched and
                    end_date_avail == end_date_sched)
 
-    # --- Interactive Date Verification Display ---
     with st.container(border=True):
         st.write("**File Date Verification**")
         c1, c2 = st.columns(2)
-
         date_range_avail_str = f"{start_date_avail} to {end_date_avail}" if start_date_avail and end_date_avail else "N/A"
         date_range_sched_str = f"{start_date_sched} to {end_date_sched}" if start_date_sched and end_date_sched else "N/A"
-
         c1.metric("Trainer Availability Dates", date_range_avail_str, help=avail_name)
         c2.metric("ScheduleAtAGlance Dates", date_range_sched_str, help=sched_name)
-
         if dates_valid:
             st.success(f"✅ Dates match: **{date_range_avail_str}**.")
         else:
@@ -145,22 +182,48 @@ if uploaded_availability and uploaded_schedule:
 
     if dates_valid:
         pdf_filename = f"Availability {start_date_avail} to {end_date_avail}.pdf"
+        
+        # --- New Sorting Option ---
+        sort_order = st.radio(
+            "**Sort therapists by:**",
+            ("Alphabetical", "By First Availability"),
+            horizontal=True,
+            help="Choose how to order therapists for each day in the PDF report."
+        )
 
         if st.button("Generate Report", type="primary"):
             with st.spinner("Processing schedules and generating report..."):
                 try:
-                    availability_df = load_and_parse_availability(uploaded_availability)
+                    availability_df, name_map = load_and_parse_availability(uploaded_availability)
                     obligations_df = load_and_clean_schedule(uploaded_schedule)
-
+                    
+                    continuous_blocks, individual_slots = calculate_availability(
+                        availability_df,
+                        obligations_df,
+                        session_duration_minutes=config['session_duration_minutes']
+                    )
+                    
+                    couples_slots = find_couples_slots(
+                        continuous_blocks,
+                        obligations_df,
+                        tolerance_minutes=config['tolerance_minutes'],
+                        session_duration_minutes=config['session_duration_minutes']
+                    )
+                    
+                    # Pass settings and sort order to the PDF generator
+                    pdf_buffer = generate_pdf_report(
+                        individual_slots, 
+                        couples_slots,
+                        name_map,
+                        st.session_state.pdf_settings, 
+                        sort_order
+                    )
+                    
                     st.session_state.report_generated = True
-                    final_slots = calculate_free_slots(availability_df, obligations_df)
-                    couples_slots = find_couples_slots(final_slots, obligations_df)
-                    pdf_buffer = generate_pdf_report(final_slots, couples_slots)
                     st.session_state.pdf_report = pdf_buffer
                     st.session_state.pdf_filename = pdf_filename
                     st.success("Report generated successfully!")
 
-                # --- User-Friendly, Dual-User Error Details ---
                 except FileProcessingError as e:
                     st.session_state.report_generated = False
                     error_str = str(e)

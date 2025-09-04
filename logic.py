@@ -3,6 +3,7 @@ import re
 from datetime import datetime, timedelta
 from fpdf import FPDF
 from io import BytesIO
+from bs4 import BeautifulSoup
 
 # --- Section 0: Custom Exception Definitions ---
 class FileProcessingError(Exception):
@@ -26,6 +27,36 @@ def normalize_name(name):
         return None
     match = re.search(r'^\s*([a-zA-Z]+)', name)
     return match.group(1).lower().strip() if match else None
+
+def format_therapist_name(raw_name_string):
+    """Formats the therapist's raw name to include a pressure description."""
+    if not isinstance(raw_name_string, str):
+        return ""
+
+    # 1. Extract the primary name (first alphabetical word)
+    name_match = re.search(r'^\s*([a-zA-Z]+)', raw_name_string)
+    name = name_match.group(1).title() if name_match else raw_name_string
+
+    # 2. Find the pressure level indicator
+    level = None
+    # Prioritize '3+' as it contains '3'
+    if '3+' in raw_name_string:
+        level = '3+'
+    else:
+        pressure_match = re.search(r'\b([34])\b', raw_name_string)
+        if pressure_match:
+            level = pressure_match.group(1)
+    
+    suffix = ""
+    if level:
+        if level == "3":
+            suffix = " (Light to Medium)"
+        elif level == "3+":
+            suffix = " (Light to Medium+)"
+        elif level == "4":
+            suffix = " (Medium to Deep)"
+    
+    return f"{name}{suffix}"
 
 def load_and_clean_schedule(file_path):
     """Loads and processes the 'ScheduleAtAGlance' report."""
@@ -62,74 +93,98 @@ def load_and_clean_schedule(file_path):
 
 
 def load_and_parse_availability(file_object):
-    """Loads and parses the semi-structured 'Trainer Availability' report."""
-    df = None
+    """
+    Loads and parses the 'Trainer Availability' report by navigating its
+    specific HTML structure using BeautifulSoup.
+    """
     try:
         file_object.seek(0)
-        df = pd.read_excel(file_object, header=None, engine='openpyxl')
-    except Exception:
-        try:
-            file_object.seek(0)
-            df = pd.read_excel(file_object, header=None, engine='xlrd')
-        except Exception:
-            try:
-                file_object.seek(0)
-                html_dfs = pd.read_html(file_object, header=None)
-                if html_dfs:
-                    df = html_dfs[0]
-            except Exception as e:
-                 raise AvailabilityParsingError(f"The file could not be read as an Excel or HTML file. It may be corrupted or in an unsupported format. Original error: {e}")
-
-    if df is None or df.empty:
-        raise AvailabilityParsingError("The 'Trainer Availability' file appears to be empty or in an unrecognized format.")
-
-    try:
-        df.columns = ['col1', 'col2', 'col3'][:len(df.columns)]
-        lines = df.apply(lambda row: ' '.join(row.dropna().astype(str)), axis=1)
+        content = file_object.read()
+        soup = BeautifulSoup(content, 'lxml')
 
         availability_data = []
-        current_therapist = None
-        current_date = None
+        display_name_map = {}
+        
+        # Find all <strong> tags, which contain the staff names
+        schedule_headers = soup.find_all('strong')
 
-        for line in lines:
-            if line.strip().upper().startswith('SCHEDULE FOR'):
-                name_part = line.split('SCHEDULE FOR')[-1]
+        for header in schedule_headers:
+            header_text = header.get_text(strip=True).upper()
+            
+            if header_text.startswith('SCHEDULE FOR'):
+                # Extract the therapist's name
+                name_part = header_text.replace('SCHEDULE FOR', '').strip()
                 current_therapist = normalize_name(name_part)
-                continue
+                if not current_therapist:
+                    continue # Skip entries like '*WAITLIST*' or '*LATE CANCEL*'
 
-            date_match = re.search(r'\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s(January|February|March|April|May|June|July|August|September|October|November|December)\s\d{1,2},\s\d{4}', line)
-            if date_match:
-                current_date = pd.to_datetime(date_match.group(0)).date()
-                continue
+                # Populate the name map for later display formatting
+                if current_therapist not in display_name_map:
+                    display_name_map[current_therapist] = name_part.title()
 
-            if current_therapist and current_date and 'Appointments' in line:
-                time_match = re.search(r'(\d{1,2}:\d{2}\s*(?:am|pm))\s*-\s*(\d{1,2}:\d{2}\s*(?:am|pm))', line, re.IGNORECASE)
-                if time_match:
-                    start_str, end_str = time_match.groups()
-                    start_dt = datetime.combine(current_date, datetime.strptime(start_str.strip(), '%I:%M %p').time())
-                    end_dt = datetime.combine(current_date, datetime.strptime(end_str.strip(), '%I:%M %p').time())
+                # Find the parent table of the header, then find the schedule table within it
+                parent_table = header.find_parent('table')
+                schedule_table = parent_table.find('table', id='staffScheduleReport')
 
-                    availability_data.append({
-                        'therapist': current_therapist,
-                        'start_datetime': start_dt,
-                        'end_datetime': end_dt
-                    })
+                if not schedule_table:
+                    continue # This therapist has no schedule table (e.g., Heidi, MBO)
+
+                current_date = None
+                # Process the rows within this specific therapist's schedule table
+                for row in schedule_table.find_all('tr'):
+                    cells = row.find_all('td')
+                    
+                    # A row with a single, bolded cell is a date header
+                    if len(cells) == 1 and cells[0].find('strong'):
+                        date_text = cells[0].get_text(strip=True)
+                        date_match = re.search(r'\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s(January|February|March|April|May|June|July|August|September|October|November|December)\s\d{1,2},\s\d{4}', date_text)
+                        if date_match:
+                            current_date = pd.to_datetime(date_match.group(0)).date()
+                        continue
+
+                    # A row with multiple cells is a time entry
+                    if current_date and len(cells) > 2:
+                        time_text = cells[1].get_text(strip=True)
+                        description_text = cells[2].get_text(strip=True)
+                        
+                        # Only process rows marked as "Appointments"
+                        if 'Appointments' in description_text:
+                            time_match = re.search(r'(\d{1,2}:\d{2}\s*(?:am|pm))\s*-\s*(\d{1,2}:\d{2}\s*(?:am|pm))', time_text, re.IGNORECASE)
+                            if time_match:
+                                start_str, end_str = time_match.groups()
+                                start_dt = datetime.combine(current_date, datetime.strptime(start_str.strip(), '%I:%M %p').time())
+                                end_dt = datetime.combine(current_date, datetime.strptime(end_str.strip(), '%I:%M %p').time())
+
+                                availability_data.append({
+                                    'therapist': current_therapist,
+                                    'start_datetime': start_dt,
+                                    'end_datetime': end_dt
+                                })
         
         if not availability_data:
-            raise AvailabilityParsingError("Successfully read the file, but could not find any valid availability entries. Please check that the content contains expected text like 'SCHEDULE FOR' and correctly formatted time ranges (e.g., '9:00 am - 5:00 pm').")
+            raise AvailabilityParsingError("Successfully read the file, but could not find any valid availability entries. Please check the file content.")
 
-        return pd.DataFrame(availability_data)
+        return pd.DataFrame(availability_data), display_name_map
     except Exception as e:
         raise AvailabilityParsingError(f"An unexpected error occurred while parsing the 'Trainer Availability' data: {e}")
 
-
 # --- Section 2: Availability Calculation Engine ---
 
-def calculate_free_slots(availability_df, obligations_df):
-    """Main function to calculate all available slots for all therapists."""
+# In logic.py, replace the entire calculate_free_slots function with this:
+
+# In logic.py, replace the entire calculate_free_slots function with this:
+
+def calculate_availability(availability_df, obligations_df, session_duration_minutes=75):
+    """
+    Calculates all available slots and continuous free blocks for all therapists.
+    This function serves as the core availability engine, producing two outputs:
+    1. A list of continuous free time blocks for all therapists.
+    2. A list of discrete, bookable slots for individual appointments.
+    """
     all_slots = []
+    all_continuous_blocks = []
     therapists = availability_df['therapist'].unique()
-    session_duration = timedelta(minutes=75) # Define session duration
+    session_duration = timedelta(minutes=session_duration_minutes)
 
     for therapist in therapists:
         therapist_avail = availability_df[availability_df['therapist'] == therapist]
@@ -144,6 +199,7 @@ def calculate_free_slots(availability_df, obligations_df):
                 (therapist_obs['end_datetime'] <= day_end)
             ].sort_values('start_datetime').to_dict('records')
 
+            # Merge overlapping or back-to-back obligations
             if not day_obs:
                 merged_obs = []
             else:
@@ -155,6 +211,7 @@ def calculate_free_slots(availability_df, obligations_df):
                     else:
                         merged_obs.append(current)
 
+            # Determine the continuous free time blocks between obligations
             free_time = []
             current_start = day_start
             for obs in merged_obs:
@@ -164,50 +221,75 @@ def calculate_free_slots(availability_df, obligations_df):
             if current_start < day_end:
                 free_time.append({'start': current_start, 'end': day_end})
 
+            # Process each continuous free block
             for free_block in free_time:
                 block_start = free_block['start']
                 block_end = free_block['end']
-
-                while block_start + session_duration <= block_end:
-                    slot_end = block_start + session_duration
-                    all_slots.append({
+                
+                # First, save the entire continuous block for couples analysis
+                if block_end - block_start >= session_duration:
+                    all_continuous_blocks.append({
                         'therapist': therapist,
                         'start': block_start,
-                        'end': slot_end
+                        'end': block_end
                     })
-                    block_start += session_duration
-    return all_slots
 
-def find_couples_slots(individual_slots, obligations_df, tolerance_minutes=30, session_duration_minutes=75, min_gap_hours=1):
+                # Second, generate discrete slots for individual appointments from this block
+                is_first_gap_of_day = (block_start == day_start)
+                day_has_appointments = bool(merged_obs)
+                use_flush_right_strategy = is_first_gap_of_day and day_has_appointments
+
+                total_free_duration = block_end - block_start
+                if total_free_duration >= session_duration:
+                    num_sessions = total_free_duration // session_duration
+                    
+                    start_point = block_start
+                    if use_flush_right_strategy:
+                        total_sessions_duration = num_sessions * session_duration
+                        start_point = block_end - total_sessions_duration
+
+                    for _ in range(num_sessions):
+                        all_slots.append({
+                            'therapist': therapist,
+                            'start': start_point,
+                            'end': start_point + session_duration
+                        })
+                        start_point += session_duration
+    
+    # Return both the continuous blocks and the sorted individual slots
+    return all_continuous_blocks, sorted(all_slots, key=lambda x: (x['therapist'], x['start']))
+
+
+def find_couples_slots(continuous_blocks, obligations_df, tolerance_minutes=30, session_duration_minutes=75, min_gap_hours=1):
     """
     Identifies overlapping slots for couples massages using a hybrid approach.
 
-    This function first finds all slots where two or more therapists start at the
-    exact same time (the "perfect match" method). It then searches for "near
-    miss" opportunities where therapists' start times are within a specified
-    tolerance window. The results are combined and de-duplicated.
-    
-    Args:
-        individual_slots (list): A list of dictionaries, each representing an available
-                                 slot for a single therapist.
-        obligations_df (pd.DataFrame): Not used in this version but kept for compatibility.
-        tolerance_minutes (int): The maximum time difference in minutes for a "near miss".
-        session_duration_minutes (int): The duration of a standard session.
-        min_gap_hours (int): Not used in this version but kept for compatibility.
-
-    Returns:
-        list: A sorted list of dictionaries, each representing a couples massage
-              opportunity with a start time and a list of available therapists.
+    This function prioritizes "perfect matches" where therapists have discrete
+    slots starting at the exact same time. It then finds "near miss"
+    opportunities by calculating the actual intersection of two therapists'
+    continuous availability blocks.
     """
-    if not individual_slots:
+    if not continuous_blocks:
         return []
 
-    # This dictionary will store all unique opportunities, keyed by start time.
-    # Using a set for therapists automatically handles duplicates.
     final_opportunities = {}
+    session_duration = timedelta(minutes=session_duration_minutes)
+    conflict_gap = timedelta(hours=min_gap_hours)
 
-    # --- Phase 1: Find all "Perfect Matches" (Old Function's Logic) ---
-    # Group therapists by their exact start time.
+    # --- Preparation: Generate discrete slots from continuous blocks to find perfect matches ---
+    individual_slots = []
+    for block in continuous_blocks:
+        num_sessions = (block['end'] - block['start']) // session_duration
+        start_point = block['start']
+        for _ in range(num_sessions):
+            individual_slots.append({
+                'therapist': block['therapist'],
+                'start': start_point,
+                'end': start_point + session_duration
+            })
+            start_point += session_duration
+
+    # --- Phase 1: Find and store all "Perfect Matches" ---
     slots_by_exact_time = {}
     for slot in individual_slots:
         start_time = slot['start']
@@ -215,79 +297,113 @@ def find_couples_slots(individual_slots, obligations_df, tolerance_minutes=30, s
             slots_by_exact_time[start_time] = set()
         slots_by_exact_time[start_time].add(slot['therapist'])
 
-    # Add any groups with 2 or more therapists to our final list.
     for start_time, therapists in slots_by_exact_time.items():
         if len(therapists) >= 2:
-            final_opportunities[start_time] = therapists.copy()
+            final_opportunities[start_time] = therapists
+    
+    perfect_match_times = set(final_opportunities.keys())
 
+    # --- Phase 2: Find "Near Miss" candidates using a true interval intersection ---
+    therapist_blocks = {}
+    for block in continuous_blocks:
+        therapist = block['therapist']
+        if therapist not in therapist_blocks:
+            therapist_blocks[therapist] = []
+        therapist_blocks[therapist].append({'start': block['start'], 'end': block['end']})
 
-    # --- Phase 2: Find all "Near Miss" Matches (New Function's Goal) ---
-    # This approach finds new opportunities without the restrictive filtering.
-    therapist_slots = {}
-    for slot in individual_slots:
-        therapist = slot['therapist']
-        if therapist not in therapist_slots:
-            therapist_slots[therapist] = []
-        therapist_slots[therapist].append({'start': slot['start'], 'end': slot['end']})
-
-    therapists = list(therapist_slots.keys())
-    tolerance = timedelta(minutes=tolerance_minutes)
-    session_duration = timedelta(minutes=session_duration_minutes)
-
-    # Compare every therapist with every other therapist
+    therapists = list(therapist_blocks.keys())
+    
     for i in range(len(therapists)):
         for j in range(i + 1, len(therapists)):
             t1_name, t2_name = therapists[i], therapists[j]
-            slots1, slots2 = therapist_slots[t1_name], therapist_slots[t2_name]
+            blocks1, blocks2 = therapist_blocks[t1_name], therapist_blocks[t2_name]
 
-            # Compare each slot of therapist 1 with each slot of therapist 2
-            for s1 in slots1:
-                for s2 in slots2:
-                    # Check if their start times are within the tolerance window
-                    if abs(s1['start'] - s2['start']) <= tolerance:
-                        # The actual couples massage must start at the LATER of the two times
-                        aligned_start = max(s1['start'], s2['start'])
-                        aligned_end = aligned_start + session_duration
+            for b1 in blocks1:
+                for b2 in blocks2:
+                    # Find the latest start time and earliest end time to get the shared availability window
+                    overlap_start = max(b1['start'], b2['start'])
+                    overlap_end = min(b1['end'], b2['end'])
 
-                        # Ensure both therapists are actually free for the entire aligned duration
-                        if aligned_end <= s1['end'] and aligned_end <= s2['end']:
-                            # Add this opportunity to our final dictionary
-                            if aligned_start not in final_opportunities:
-                                final_opportunities[aligned_start] = set()
-                            final_opportunities[aligned_start].add(t1_name)
-                            final_opportunities[aligned_start].add(t2_name)
+                    # Check if the shared window is long enough for at least one session
+                    if overlap_end - overlap_start >= session_duration:
+                        # Generate all possible slots within this shared window
+                        potential_start = overlap_start
+                        while potential_start + session_duration <= overlap_end:
+                            # This is a valid potential slot. Now, filter it.
+                            is_perfect_match = potential_start in perfect_match_times
+                            is_too_close = False
+                            if not is_perfect_match:
+                                for perfect_time in perfect_match_times:
+                                    if abs(potential_start - perfect_time) < conflict_gap:
+                                        is_too_close = True
+                                        break
+                            
+                            if not is_perfect_match and not is_too_close:
+                                print(f"DEBUG: Near Miss ADDED! Therapists: {t1_name.title()}, {t2_name.title()}. Aligned Start: {potential_start.strftime('%Y-%m-%d %I:%M %p')}")
+                                if potential_start not in final_opportunities:
+                                    final_opportunities[potential_start] = set()
+                                final_opportunities[potential_start].add(t1_name)
+                                final_opportunities[potential_start].add(t2_name)
+                            
+                            # Move to the next potential start time
+                            potential_start += session_duration
 
-    # --- Phase 3: Format the Final Results ---
-    # Convert the dictionary of opportunities into the required list format.
+    # --- Phase 4: Format final results ---
     final_list = []
     for start_time, therapists_set in final_opportunities.items():
-        # Ensure we still only include slots with at least two therapists
         if len(therapists_set) >= 2:
             final_list.append({
                 'start': start_time,
                 'therapists': sorted(list(therapists_set))
             })
 
-    # Sort the final list chronologically for the report.
     return sorted(final_list, key=lambda x: x['start'])
-# --- Section 3: PDF Report Generation ---
+
+
+# In logic.py, replace the entire AvailabilityPDF class and generate_pdf_report function
 
 class AvailabilityPDF(FPDF):
+    def __init__(self, settings, name_map):
+        super().__init__()
+        self.settings = settings
+        self.name_map = name_map
+
+    def _apply_style(self, style_key):
+        """Helper function to apply font, style, size, and color from settings."""
+        style = self.settings.get(style_key, {})
+        font_style = ''
+        if style.get('bold', False): font_style += 'B'
+        if style.get('italic', False): font_style += 'I'
+
+        font_family = style.get('font_family', 'Helvetica')
+
+        # The set_font() method handles core PDF fonts (like Helvetica, Times, Courier)
+        # automatically. The previous, problematic call to add_font() has been removed.
+        self.set_font(font_family, style=font_style, size=style.get('font_size', 12))
+        
+        hex_color = style.get('color_hex', '#000000').lstrip('#')
+        r = int(hex_color[0:2], 16)
+        g = int(hex_color[2:4], 16)
+        b = int(hex_color[4:6], 16)
+        self.set_text_color(r, g, b)
+
     def header(self):
-        self.set_font('Arial', 'B', 16)
+        self._apply_style('title')
         self.cell(0, 10, 'Weekly Availability Report', 0, 1, 'C')
         self.ln(5)
 
     def footer(self):
         self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
+        self.set_font('Helvetica', 'I', 8)
+        self.set_text_color(128)
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
     def add_couples_section(self, couples_slots):
-        self.set_font('Arial', 'B', 14)
+        self._apply_style('couples_header')
         self.cell(0, 10, "Available Times for Couple's Massages", 0, 1, 'C')
-        self.set_font('Arial', '', 12)
+        
         if not couples_slots:
+            self._apply_style('couples_body')
             self.cell(0, 10, "  No couples massage opportunities found for this period.", 0, 1, 'C')
         else:
             slots_by_day = {}
@@ -300,38 +416,58 @@ class AvailabilityPDF(FPDF):
                     slots_by_day[day_str].append(time_str)
 
             for day, times in slots_by_day.items():
-                self.cell(0, 8, f"  {day}: {', '.join(times)}", 0, 1, 'C')
+                self._apply_style('couples_body')
+                # Sort times chronologically before joining
+                sorted_times = sorted(times, key=lambda x: datetime.strptime(x, '%I:%M %p'))
+                self.cell(0, 8, f"  {day}: {', '.join(sorted_times)}", 0, 1, 'C')
         self.ln(10)
 
-    def add_daily_availability(self, date, slots_for_day):
-        self.set_font('Arial', 'B', 14)
+    def add_daily_availability(self, date, slots_for_day, sort_order="Alphabetical"):
+        self._apply_style('day_of_week')
         day_str = date.strftime('%A, %B %d')
         self.cell(0, 10, day_str, 0, 1, 'C')
 
         if not slots_for_day:
+            self.set_font('Helvetica', 'I', 12) # Use a default for this simple message
+            self.set_text_color(128)
             self.cell(0, 8, "  No availability.", 0, 1, 'C')
             return
 
         therapist_slots = {}
         for slot in slots_for_day:
-            therapist = slot['therapist'].title()
-            if therapist not in therapist_slots:
-                therapist_slots[therapist] = []
+            therapist_key = slot['therapist']
+            if therapist_key not in therapist_slots:
+                therapist_slots[therapist_key] = []
             time_str = slot['start'].strftime('%I:%M %p').lstrip('0').lower()
-            therapist_slots[therapist].append(time_str)
+            therapist_slots[therapist_key].append(time_str)
 
-        for therapist, times in sorted(therapist_slots.items()):
+        # --- Sorting Logic Implementation ---
+        therapist_items = therapist_slots.items()
+        if sort_order == "By First Availability":
+            sorted_items = sorted(therapist_items, key=lambda item: datetime.strptime(
+                sorted(item[1], key=lambda t: datetime.strptime(t, '%I:%M %p'))[0], '%I:%M %p'
+            ))
+        else:  # Default to Alphabetical
+            sorted_items = sorted(therapist_items)
+        
+        for therapist_key, times in sorted_items:
             times_str = ', '.join(sorted(times, key=lambda x: datetime.strptime(x, '%I:%M %p')))
-
-            self.set_font('Arial', 'B', 12)
-            self.cell(0, 8, f"{therapist}", 0, 1, 'C')
-            self.set_font('Arial', '', 12)
+            
+            # Look up the raw name and format it for display
+            raw_name = self.name_map.get(therapist_key, therapist_key.title())
+            display_name = format_therapist_name(raw_name)
+            
+            self._apply_style('therapist')
+            self.cell(0, 8, f"{display_name}", 0, 1, 'C')
+            
+            self._apply_style('times')
             self.cell(0, 8, times_str, 0, 1, 'C')
         self.ln(5)
 
-def generate_pdf_report(individual_slots, couples_slots):
+def generate_pdf_report(individual_slots, couples_slots, name_map, settings, sort_order):
     """Generates the final PDF report in memory."""
-    pdf = AvailabilityPDF()
+    pdf = AvailabilityPDF(settings, name_map)
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
     pdf.add_couples_section(couples_slots)
@@ -345,13 +481,13 @@ def generate_pdf_report(individual_slots, couples_slots):
 
     sorted_dates = sorted(slots_by_date.keys())
     for date in sorted_dates:
-        pdf.add_daily_availability(date, slots_by_date[date])
+        pdf.add_daily_availability(date, slots_by_date[date], sort_order)
 
-    # MODIFIED: Encode the string output from the PDF library to bytes.
-    pdf_output_string = pdf.output(dest='S')
-    pdf_buffer = BytesIO(pdf_output_string.encode('latin-1'))
+    # Output to a bytes buffer
+    pdf_buffer = BytesIO(pdf.output())
     
     return pdf_buffer
+
 
 def extract_date_range_from_filename(filename):
     """Extracts date range from filenames using regex."""
