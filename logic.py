@@ -453,9 +453,7 @@ class AvailabilityPDF(FPDF):
         for therapist_key, times in sorted_items:
             times_str = ', '.join(sorted(times, key=lambda x: datetime.strptime(x, '%I:%M %p')))
             
-            # Look up the raw name and format it for display
-            raw_name = self.name_map.get(therapist_key, therapist_key.title())
-            display_name = format_therapist_name(raw_name)
+            display_name = self.name_map.get(therapist_key, therapist_key.title())
             
             self._apply_style('therapist')
             self.cell(0, 8, f"{display_name}", 0, 1, 'C')

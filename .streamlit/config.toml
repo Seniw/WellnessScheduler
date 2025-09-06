@@ -1,0 +1,7 @@
+[theme]
+# Use off-white background for main content, light gray for sidebar
+primaryColor = "#779f72"
+backgroundColor = "#FAFAFA"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#38565c"
+font = "sans serif"
