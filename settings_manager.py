@@ -8,27 +8,27 @@ def get_default_settings():
     return {
         'title': {
             'font_family': 'Helvetica', 'font_size': 16, 'bold': True, 'italic': False,
-            'color_hex': '#000000'
+            'color_hex': '#da6342'  
         },
         'day_of_week': {
             'font_family': 'Helvetica', 'font_size': 14, 'bold': True, 'italic': False,
-            'color_hex': '#000000'
+            'color_hex': '#da6342'  
         },
         'therapist': {
             'font_family': 'Helvetica', 'font_size': 12, 'bold': True, 'italic': False,
-            'color_hex': '#333333'
+            'color_hex': '#779f72'  
         },
         'times': {
             'font_family': 'Helvetica', 'font_size': 12, 'bold': False, 'italic': False,
-            'color_hex': '#555555'
+            'color_hex': '#779f72'  
         },
         'couples_header': {
             'font_family': 'Helvetica', 'font_size': 14, 'bold': True, 'italic': False,
-            'color_hex': '#000000'
+            'color_hex': '#da6342'  
         },
         'couples_body': {
             'font_family': 'Helvetica', 'font_size': 12, 'bold': False, 'italic': False,
-            'color_hex': '#555555'
+            'color_hex': '#779f72'  
         }
     }
 

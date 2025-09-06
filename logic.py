@@ -370,18 +370,6 @@ class AvailabilityPDF(FPDF):
 
     def _apply_style(self, style_key):
         """Helper function to apply font, style, size, and color from settings."""
-
-        DEFAULT_COLORS = {
-            'title': '#da6342',
-            'couples_header': '#da6342',
-            'day_of_week': '#da6342',
-            'couples_body': '#779f72',
-            'therapist': '#779f72',
-            'times': '#779f72'
-        }
-        # Get the specific default color for this key, fallback to black if key is unknown
-        specific_default_color = DEFAULT_COLORS.get(style_key, '#000000')
-
         style = self.settings.get(style_key, {})
         font_style = ''
         if style.get('bold', False): font_style += 'B'
@@ -393,21 +381,16 @@ class AvailabilityPDF(FPDF):
         # automatically. The previous, problematic call to add_font() has been removed.
         self.set_font(font_family, style=font_style, size=style.get('font_size', 12))
         
-        # --- START MODIFICATION: Use new specific default color as fallback ---
-        hex_color = style.get('color_hex', specific_default_color).lstrip('#') # Replaced '#000000'
-        # --- END MODIFICATION ---
-        
+        hex_color = style.get('color_hex', '#000000').lstrip('#')
         r = int(hex_color[0:2], 16)
         g = int(hex_color[2:4], 16)
         b = int(hex_color[4:6], 16)
         self.set_text_color(r, g, b)
 
     def header(self):
-        # --- MODIFICATION: Disabled repeating header. Title is now added once in generate_pdf_report() ---
         pass
 
     def footer(self):
-        # --- MODIFICATION: Disabled page number footer ---
         pass
 
     def add_couples_section(self, couples_slots):
@@ -479,10 +462,6 @@ def generate_pdf_report(individual_slots, couples_slots, name_map, settings, sor
     pdf = AvailabilityPDF(settings, name_map)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-
-    pdf._apply_style('title')
-    pdf.cell(0, 10, 'Weekly Availability Report', 0, 1, 'C')
-    pdf.ln(5)
 
     pdf.add_couples_section(couples_slots)
 
