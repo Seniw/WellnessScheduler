@@ -44,7 +44,7 @@ The application is written in Python and uses the following libraries:
 - `Pandas` — Data handling  
 - `BeautifulSoup` — Parsing HTML-formatted `.xls` files  
 - `FPDF2` — PDF generation  
-- `platformdirs` — Cross-platform config directory handling  
+
 
 ## Project Structure
 ```

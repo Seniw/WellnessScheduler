@@ -15,25 +15,12 @@ from logic import (
     format_therapist_name  # <-- Import the translator function
 )
 
-# --- Helper function for asset paths ---
-def get_asset_path(file_name):
-    """
-    Gets the absolute path to an asset, handling both development (script) 
-    and production (PyInstaller frozen executable) states.
-    """
-    if getattr(sys, 'frozen', False):
-        # Path when running as a bundled executable
-        application_path = os.path.dirname(sys.executable)
-    else:
-        # Path when running as a standard .py script
-        application_path = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(application_path, file_name)
 
 def load_app_config():
     """Loads operational application settings (tolerances, durations) from config.ini."""
     config = configparser.ConfigParser()
-    config_path = get_asset_path('config.ini')
-    config.read(config_path)
+    # Use a simple relative path, Streamlit runs from the repo root
+    config.read('config.ini')
     settings = config['settings']
     return {
         'session_duration_minutes': settings.getint('session_duration_minutes', 75),
@@ -70,14 +57,19 @@ def get_schedule_data(uploaded_file):
 
 
 # --- UI Configuration ---
-st.set_page_config(page_title="Wellness Scheduler", layout="centered")
+# This must be the first Streamlit command.
+st.set_page_config(
+    page_title="Wellness Scheduler", 
+    page_icon="assets/favicon.ico", # <-- ADD THIS (use your .ico file's name)
+    layout="centered"
+)
 
 # Load operational configuration and persistent PDF settings
 config = load_app_config()
 if 'pdf_settings' not in st.session_state:
-    # Load user's saved PDF styles (or defaults if none exist)
-    st.session_state.pdf_settings = settings_manager.load_settings()
-
+    # Load the default styles once per session
+    st.session_state.pdf_settings = settings_manager.get_initial_settings() # <-- Use new function
+    
 # --- Initialize Session State Keys ---
 if 'show_guide_toggle' not in st.session_state:
     st.session_state.show_guide_toggle = True
@@ -162,8 +154,6 @@ with st.sidebar:
             st.markdown(preview_html, unsafe_allow_html=True)
             # --- End Preview ---
             
-            # Persist settings to disk on every change
-            settings_manager.save_settings(st.session_state.pdf_settings)
             st.divider()
 
         # Create the UI for each styleable PDF element
@@ -189,7 +179,7 @@ with st.sidebar:
             * Save the file as is (don't change the default file name).
         """)
         
-        image_path_trainer_avail = get_asset_path("trainierAvailguideimg.png")
+        image_path_trainer_avail = "assets/trainierAvailguideimg.png"
         if os.path.exists(image_path_trainer_avail):
             st.image(image_path_trainer_avail)
 
@@ -203,7 +193,7 @@ with st.sidebar:
             * Save the file as is (don't change the default file name).
         """)
 
-        image_path_schedule = get_asset_path("ScheduleAtAGlance.png")
+        image_path_schedule = "assets/ScheduleAtAGlance.png"
         if os.path.exists(image_path_schedule):
             st.image(image_path_schedule)
 
