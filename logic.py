@@ -462,6 +462,10 @@ def generate_pdf_report(individual_slots, couples_slots, name_map, settings, sor
     pdf = AvailabilityPDF(settings, name_map)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
+    
+    pdf._apply_style('title')
+    pdf.cell(0, 10, 'Therapist Availability', 0, 1, 'C') # <-- MODIFIED
+    pdf.ln(5)
 
     pdf.add_couples_section(couples_slots)
 
