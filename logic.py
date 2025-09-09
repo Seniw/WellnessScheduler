@@ -29,16 +29,23 @@ def normalize_name(name):
     match = re.search(r'^\s*([a-zA-Z]+)', name)
     return match.group(1).lower().strip() if match else None
 
-def format_therapist_name(raw_name_string):
-    """Formats the therapist's raw name to include a pressure description."""
+def format_therapist_name(raw_name_string, elite_therapists=None):
+    """Formats the therapist's raw name to include a pressure description and elite status."""
     if not isinstance(raw_name_string, str):
         return ""
+
+    if elite_therapists is None:
+        elite_therapists = set()
 
     # 1. Extract the primary name (first alphabetical word)
     name_match = re.search(r'^\s*([a-zA-Z]+)', raw_name_string)
     name = name_match.group(1).title() if name_match else raw_name_string
 
-    # 2. Find the pressure level indicator
+    # 2. Check for Elite Status
+    normalized_name = normalize_name(raw_name_string)
+    elite_tag = " Elite Therapist" if normalized_name in elite_therapists else ""
+
+    # 3. Find the pressure level indicator
     level = None
     # Prioritize '3+' as it contains '3'
     if '3+' in raw_name_string:
@@ -57,7 +64,7 @@ def format_therapist_name(raw_name_string):
         elif level == "4":
             suffix = " (Medium to Deep)"
     
-    return f"{name}{suffix}"
+    return f"{name}{elite_tag}{suffix}"
 
 def load_and_clean_schedule(file_path):
     """Loads and processes the 'ScheduleAtAGlance' report."""
@@ -69,6 +76,11 @@ def load_and_clean_schedule(file_path):
         if missing_cols:
             raise ScheduleParsingError(f"The 'ScheduleAtAGlance' report is missing the following required column(s): {', '.join(missing_cols)}.")
 
+        # --- Identify Elite Therapists ---
+        # This is done before columns are renamed/dropped for efficiency.
+        elite_df = df[df['Description'].str.contains("Elite Level", na=False)]
+        elite_therapists = set(elite_df['Staff'].apply(normalize_name).dropna())
+        
         df = df[required_cols]
         df.columns = ['date', 'start_time', 'end_time', 'description', 'therapist']
 

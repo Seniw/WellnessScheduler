@@ -48,12 +48,12 @@ def get_availability_data(uploaded_file):
 def get_schedule_data(uploaded_file):
     """Cached wrapper for load_and_clean_schedule."""
     try:
-        obligations_df = load_and_clean_schedule(uploaded_file)
-        return obligations_df, None
+        obligations_df, elite_therapists = load_and_clean_schedule(uploaded_file)
+        return obligations_df, elite_therapists, None
     except FileProcessingError as e:
-        return None, str(e)
+        return None, None, str(e)
     except Exception as e:
-        return None, f"An unexpected error occurred reading the schedule file: {e}"
+        return None, None, f"An unexpected error occurred reading the schedule file: {e}"
 
 
 # --- UI Configuration ---
@@ -82,8 +82,8 @@ if 'original_editor_map' not in st.session_state:
     st.session_state.original_editor_map = None      # Stores {acronym_name: friendly_name} for resetting the editor (e.g., {'Jane (3) Hss': 'Jane (Light to Medium)'})
 if 'editable_editor_map' not in st.session_state:
     st.session_state.editable_editor_map = None      # Stores the user-edited {acronym_name: final_name} (this is bound to the st.data_editor)
-if 'source_file_id' not in st.session_state:
-    st.session_state.source_file_id = None            # Tracks the current file ID to know when to re-parse names
+if 'processed_files_tuple' not in st.session_state:
+    st.session_state.processed_files_tuple = None    # Tracks (avail_id, sched_id) to know when to re-parse names
 
 # --- Callback to trigger the style editor expander ---
 def open_style_editor():
@@ -348,45 +348,54 @@ if uploaded_availability and uploaded_schedule:
     sched_name = uploaded_schedule.name
 
     # --- Therapist Name Map Generation ---
-    # This logic block runs whenever the availability file is changed.
-    # It parses the file ONCE (using the cache) and builds all necessary maps for the Name Editor.
-    if uploaded_availability.file_id != st.session_state.source_file_id:
-        # File has changed, re-parse and build all new name maps
-        availability_df, map_id_to_acronym_FULL, parse_error = get_availability_data(uploaded_availability)
+    # This logic block runs whenever the combination of files changes.
+    # It parses both files ONCE (using the cache) and builds all necessary maps for the Name Editor.
+    current_files_tuple = (uploaded_availability.file_id, uploaded_schedule.file_id)
+    if current_files_tuple != st.session_state.get('processed_files_tuple'):
+        # A new file or combination of files has been uploaded. Re-parse and build all name maps.
         
-        if parse_error:
-            st.error(f"Error parsing Trainer Availability: {parse_error}")
+        # 1. Parse schedule file to get the list of elite therapists
+        _, elite_therapists, sched_parse_error = get_schedule_data(uploaded_schedule)
+        
+        # 2. Parse availability file
+        availability_df, map_id_to_acronym_FULL, avail_parse_error = get_availability_data(uploaded_availability)
+        
+        # 3. Handle any parsing errors
+        if avail_parse_error or sched_parse_error:
+            if avail_parse_error: st.error(f"Error parsing Trainer Availability: {avail_parse_error}")
+            if sched_parse_error: st.error(f"Error parsing ScheduleAtAGlance: {sched_parse_error}")
             # Clear all maps on error
             st.session_state.map_id_to_acronym_ACTIVE = None
             st.session_state.original_editor_map = None
             st.session_state.editable_editor_map = None
+            st.session_state.processed_files_tuple = None # Mark as not processed so it tries again
         elif map_id_to_acronym_FULL and availability_df is not None and not availability_df.empty:
             
-            # Filter the full name map to include ONLY therapists with actual schedule data in this file
-            # The 'therapist' col in availability_df contains the IDs ('anita', 'ella', etc.)
+            # 4. Filter the full name map to include ONLY therapists with actual schedule data in this file
             active_therapist_ids = set(availability_df['therapist'].unique())
             active_map_id_to_acronym = {
                 id_key: acronym_val for id_key, acronym_val in map_id_to_acronym_FULL.items() 
                 if id_key in active_therapist_ids
             }
             
-            # Build the two maps needed for the sidebar editor
-            # Use the imported format_therapist_name function to create the "friendly" default
+            # 5. Build the two maps needed for the sidebar editor
+            # Use the imported format_therapist_name function, passing the elite list
             editor_map_acronym_to_friendly = {}
             for acronym_val in active_map_id_to_acronym.values():
-                # Translate "Taylor (3) Hss" -> "Taylor (Light to Medium)"
-                friendly_name = format_therapist_name(acronym_val) 
+                # Translate "Jeni (4)..." -> "Jeni Elite Therapist (Medium to Deep)"
+                friendly_name = format_therapist_name(acronym_val, elite_therapists=elite_therapists) 
                 editor_map_acronym_to_friendly[acronym_val] = friendly_name
 
-            # Store all maps in session state
+            # 6. Store all maps in session state
             st.session_state.map_id_to_acronym_ACTIVE = active_map_id_to_acronym # {id: acronym}
             st.session_state.original_editor_map = editor_map_acronym_to_friendly # {acronym: friendly} (for reset)
             st.session_state.editable_editor_map = editor_map_acronym_to_friendly.copy() # {acronym: friendly_or_edited} (for editor)
-            st.session_state.source_file_id = uploaded_availability.file_id
+            st.session_state.processed_files_tuple = current_files_tuple
             st.rerun() # Rerun to make the sidebar editor populate with the new data
         elif availability_df is not None and availability_df.empty:
              # This handles the edge case where the file parses but contains no actual schedules
              st.error("Trainer Availability file was read, but no valid schedule blocks were found. Cannot populate therapist editor.")
+             st.session_state.processed_files_tuple = current_files_tuple # Mark as processed to avoid loops
 
 
     # --- Date verification logic ---
@@ -478,7 +487,7 @@ if uploaded_availability and uploaded_schedule:
                     st.session_state.report_generated = True
                     st.session_state.pdf_report = pdf_buffer
                     st.session_state.pdf_filename = pdf_filename
-                    st.success("Report generated successfully!")
+                    st.success("Report generated successfully! - Be sure upload it to google docs to preserve formatting.", icon="✅")
 
                 except FileProcessingError as e:
                     st.session_state.report_generated = False
