@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from fpdf import FPDF
 from io import BytesIO
 from bs4 import BeautifulSoup
+import platform
 
 # --- Section 0: Custom Exception Definitions ---
 class FileProcessingError(Exception):
@@ -169,10 +170,6 @@ def load_and_parse_availability(file_object):
         raise AvailabilityParsingError(f"An unexpected error occurred while parsing the 'Trainer Availability' data: {e}")
 
 # --- Section 2: Availability Calculation Engine ---
-
-# In logic.py, replace the entire calculate_free_slots function with this:
-
-# In logic.py, replace the entire calculate_free_slots function with this:
 
 def calculate_availability(availability_df, obligations_df, session_duration_minutes=75):
     """
@@ -358,9 +355,7 @@ def find_couples_slots(continuous_blocks, obligations_df, tolerance_minutes=30, 
             })
 
     return sorted(final_list, key=lambda x: x['start'])
-
-
-# In logic.py, replace the entire AvailabilityPDF class and generate_pdf_report function
+# --- Section 3: PDF Report Generation Module ---
 
 class AvailabilityPDF(FPDF):
     def __init__(self, settings, name_map):
@@ -419,7 +414,10 @@ class AvailabilityPDF(FPDF):
 
     def add_daily_availability(self, date, slots_for_day, sort_order="Alphabetical"):
         self._apply_style('day_of_week')
-        day_str = date.strftime('%A, %B %d')
+        if platform.system() == 'Windows':
+            day_str = date.strftime('%A, %B %#d')
+        else:
+            day_str = date.strftime('%A, %B %-d')
         self.cell(0, 10, day_str, 0, 1, 'C')
 
         if not slots_for_day:
@@ -455,7 +453,7 @@ class AvailabilityPDF(FPDF):
             
             self._apply_style('times')
             self.cell(0, 8, times_str, 0, 1, 'C')
-        self.ln(5)
+        self.ln(2)
 
 def generate_pdf_report(individual_slots, couples_slots, name_map, settings, sort_order):
     """Generates the final PDF report in memory."""
@@ -464,7 +462,7 @@ def generate_pdf_report(individual_slots, couples_slots, name_map, settings, sor
     pdf.add_page()
     
     pdf._apply_style('title')
-    pdf.cell(0, 10, 'Therapist Availability', 0, 1, 'C') # <-- MODIFIED
+    pdf.cell(0, 10, 'Therapist Availability', 0, 1, 'C') 
     pdf.ln(5)
 
     pdf.add_couples_section(couples_slots)
