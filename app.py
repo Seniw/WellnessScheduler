@@ -435,7 +435,7 @@ if uploaded_availability and uploaded_schedule:
                 try:
                     # 1. Get base data from cache (or re-run if files changed)
                     availability_df, _, avail_err = get_availability_data(uploaded_availability)
-                    obligations_df, sched_err = get_schedule_data(uploaded_schedule)
+                    obligations_df, _, sched_err = get_schedule_data(uploaded_schedule)
 
                     if avail_err or sched_err:
                         if avail_err: st.error(f"Availability File Error: {avail_err}", icon="️⚠️")
