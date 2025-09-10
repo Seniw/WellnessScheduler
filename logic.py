@@ -98,7 +98,10 @@ def load_and_clean_schedule(file_path):
         obligations_df = df[['therapist', 'start_datetime', 'end_datetime']].copy()
         obligations_df.drop_duplicates(inplace=True)
 
-        return obligations_df.sort_values(by=['therapist', 'start_datetime']).reset_index(drop=True)
+        sorted_obligations = obligations_df.sort_values(by=['therapist', 'start_datetime']).reset_index(drop=True)
+        
+        # LINE 110: The function now returns two values instead of one.
+        return sorted_obligations, elite_therapists
     except FileProcessingError as e:
         raise e
     except Exception as e:
