@@ -421,11 +421,10 @@ class AvailabilityPDF(FPDF):
                     slots_by_day[day_str].append(time_str)
 
             for day, times in slots_by_day.items():
-                for day, times in slots_by_day.items():
                 self._apply_style('couples_body')
                 # Sort times chronologically before joining
                 sorted_times = sorted(times, key=lambda x: datetime.strptime(x, '%I:%M %p'))
-                times_str = ', '.join(sorted_times)    
+                times_str = ', '.join(sorted_times)
                 markdown_text = f"**{day}**: {times_str}"
                 self.multi_cell(0, 8, txt=markdown_text, border=0, align='C', markdown=True)
         self.ln(10)
