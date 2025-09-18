@@ -252,7 +252,7 @@ with st.sidebar:
         st.markdown("""
             This panel lists **active therapists** found in the file. Use the 'Display_Name' column to set the exact name you want printed on the final PDF.
 
-            The application automatically formats the original names to be more client-friendly based on indicators found in the 'Staff Schedule' report[cite: 1]:
+            The application automatically formats the original names to be more client-friendly based on indicators found in the 'Staff Schedule' report:
             * A **"3"** in the name is translated to `(Light to Medium)`.
             * A **"3+"** in the name is translated to `(Light to Medium+)`.
             * A **"4"** in the name is translated to `(Medium to Deep)`.
