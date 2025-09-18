@@ -207,8 +207,8 @@ def calculate_availability(availability_df, obligations_df, session_duration_min
             day_end = avail_row['end_datetime']
 
             day_obs = therapist_obs[
-                (therapist_obs['start_datetime'] >= day_start) &
-                (therapist_obs['end_datetime'] <= day_end)
+                (therapist_obs['start_datetime'] < day_end) & # Obligation must start before the shift ends
+                (therapist_obs['end_datetime'] > day_start)  # Obligation must end after the shift starts
             ].sort_values('start_datetime').to_dict('records')
 
             # Merge overlapping or back-to-back obligations
@@ -421,10 +421,13 @@ class AvailabilityPDF(FPDF):
                     slots_by_day[day_str].append(time_str)
 
             for day, times in slots_by_day.items():
+                for day, times in slots_by_day.items():
                 self._apply_style('couples_body')
                 # Sort times chronologically before joining
                 sorted_times = sorted(times, key=lambda x: datetime.strptime(x, '%I:%M %p'))
-                self.cell(0, 8, f"  {day}: {', '.join(sorted_times)}", 0, 1, 'C')
+                times_str = ', '.join(sorted_times)    
+                markdown_text = f"**{day}**: {times_str}"
+                self.multi_cell(0, 8, txt=markdown_text, border=0, align='C', markdown=True)
         self.ln(10)
 
     def add_daily_availability(self, date, slots_for_day, sort_order="Alphabetical"):
