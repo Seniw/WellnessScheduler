@@ -423,23 +423,42 @@ class AvailabilityPDF(FPDF):
             for day, times in slots_by_day.items():
                 # Apply base style once
                 self._apply_style('couples_body')
-                
-                # Grab current font settings from the base style
+
+                # Get current font settings from the base style
                 family = self.font_family
                 size = self.font_size_pt
 
-                # Set bold font just for the day
-                self.set_font(family, 'B', size)
-                self.write(8, f"{day}: ")
-
-                # Switch back to base style (regular weight)
-                self.set_font(family, '', size)
-
+                # Prepare text parts
+                day_text = f"{day}: "
                 sorted_times = sorted(times, key=lambda x: datetime.strptime(x, '%I:%M %p'))
                 times_str = ', '.join(sorted_times)
+
+                # Calculate widths of bold and regular parts
+                self.set_font(family, 'B', size)
+                day_width = self.get_string_width(day_text)
+
+                self.set_font(family, '', size)
+                times_width = self.get_string_width(times_str)
+
+                total_width = day_width + times_width
+
+                # Center horizontally: (Page width - text width) / 2
+                page_width = self.w - 2 * self.l_margin
+                start_x = self.l_margin + (page_width - total_width) / 2
+
+                # Move to X position for centering
+                self.set_x(start_x)
+
+                # Write bold day part
+                self.set_font(family, 'B', size)
+                self.write(8, day_text)
+
+                # Write regular times part
+                self.set_font(family, '', size)
                 self.write(8, times_str)
 
-                self.ln(8)  # Move to next line
+                # Line break
+                self.ln(8)
         self.ln(10)
 
     def add_daily_availability(self, date, slots_for_day, sort_order="Alphabetical"):
