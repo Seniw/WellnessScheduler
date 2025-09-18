@@ -421,38 +421,25 @@ class AvailabilityPDF(FPDF):
                     slots_by_day[day_str].append(time_str)
 
             for day, times in slots_by_day.items():
-                self._apply_style('couples_body') # Sets base font, size, and color
+                # Apply base style once
+                self._apply_style('couples_body')
                 
-                # Prepare the text components
-                sorted_times_str = ', '.join(sorted(times, key=lambda x: datetime.strptime(x, '%I:%M %p')))
-                day_part = f"{day}"
-                times_part = f": {sorted_times_str}"
+                # Grab current font settings from the base style
+                family = self.font_family
+                size = self.font_size_pt
 
-                # 1. Calculate the width of each part with its correct style
-                self.set_font(self.font_family, 'B', self.font_size) # Set to bold
-                day_width = self.get_string_width(day_part)
-                
-                self.set_font(self.font_family, '', self.font_size) # Set back to regular
-                times_width = self.get_string_width(times_part)
+                # Set bold font just for the day
+                self.set_font(family, 'B', size)
+                self.write(8, f"{day}: ")
 
-                # 2. Calculate the starting X-position to manually center the combined text
-                total_width = day_width + times_width
-                page_width = self.w - self.l_margin - self.r_margin
-                start_x = self.l_margin + (page_width - total_width) / 2
-                
-                # Guard against text being wider than the page
-                if total_width > page_width:
-                    # If text is too long, left-align it to prevent errors
-                    start_x = self.l_margin
-                
-                self.set_x(start_x)
+                # Switch back to base style (regular weight)
+                self.set_font(family, '', size)
 
-                # 3. Print the two parts sequentially on the same line
-                self.set_font(self.font_family, 'B', self.font_size) # Bold for the day
-                self.cell(day_width, 8, day_part, 0, 0) # ln=0 keeps cursor on the same line
-                
-                self.set_font(self.font_family, '', self.font_size) # Regular for the times
-                self.cell(times_width, 8, times_part, 0, 1) # ln=1 moves to the next line
+                sorted_times = sorted(times, key=lambda x: datetime.strptime(x, '%I:%M %p'))
+                times_str = ', '.join(sorted_times)
+                self.write(8, times_str)
+
+                self.ln(8)  # Move to next line
         self.ln(10)
 
     def add_daily_availability(self, date, slots_for_day, sort_order="Alphabetical"):
