@@ -235,11 +235,15 @@ with st.sidebar:
         * **How to fix it:**
             * **1. Check if Files are Open:** Make sure the Excel files are not open in Microsoft Excel or another program. Excel "locks" files when they are open, preventing this tool from reading them. Close the file and try again.
             * **2. Check for Correct Files:** Did you accidentally upload the wrong file (like a PDF) or the same file into both slots?
-            * **3. Check for Report Format Change:** This error can occur if the scheduling software company *permanently changed the HTML structure* of the exported reports. If this happens, the application itself will need to be updated. Please contact the developer.
+            * **3. Check for a Permanent Report Format Change (Developer Fix Required)** This error can occur if your scheduling software provider updates the structure, format, or file type of their exported reports. Think of this application as a custom-made key designed to fit the specific format of those reports—if the provider changes the "lock," the key no longer works. This means the application can no longer recognize or process the updated files without a code update. Common signs include renamed columns, a different layout, or a new file type. If you suspect this is the case, please contact the developer and include a sample of the updated report.
 
         **My PDF style settings (colors, fonts) reset every time I close the app. Why?**
-        * Your custom styles are saved to a user configuration file on your computer. If this file cannot be written (due to strict IT policies or a permissions issue on your workstation), your settings will not be saved after the app closes.
-        * **How to fix it:** You can either continue setting the styles manually each session, or contact your IT department to ensure the application has "write" permissions for its own configuration directory.
+        * This is the expected behavior for this type of web application. Your custom styles are stored only for your current browser session. Because the app runs in a cloud environment with a temporary file system, it cannot save settings permanently. When you close the browser tab, the session ends, and the custom styles are cleared.
+        * **How to fix it:** You will need to re-apply your desired style customizations at the beginning of each new session. The app will always load with the default styles.
+
+                    
+        ### Contact & Support
+        Have a feature request or encounter a persistent issue? Please contact the developer at: alexanderseniw.5.pro@gmail.com
         """)
     # --- END FULL GUIDE CONTENT ---
 
