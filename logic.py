@@ -249,7 +249,8 @@ def calculate_availability(availability_df, obligations_df, session_duration_min
                 # Second, generate discrete slots for individual appointments from this block
                 is_first_gap_of_day = (block_start == day_start)
                 day_has_appointments = bool(merged_obs)
-                use_flush_right_strategy = is_first_gap_of_day and day_has_appointments
+                #I used to use the stuff behind the first gap, but pattie wanted it to not flush right ever. 
+                use_flush_right_strategy = False#is_first_gap_of_day and day_has_appointments
 
                 total_free_duration = block_end - block_start
                 if total_free_duration >= session_duration:
